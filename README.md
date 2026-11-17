@@ -40,6 +40,8 @@ Top of the board: Steakhouse Financial, Gauntlet and Veda — the largest pre-to
 
 - **Board** — all 178 rows, sortable by rank, name, TVL, 7-day growth, age and multiple, with an implied-value bar per row.
 - **Top 3 spotlight** — the three highest implied values, one click to their detail view.
+- **Top movers strip** — the five board rows with the largest seven-day TVL change, one click to their detail view.
+- **Protocol comparison** — pick 2–3 protocols from the board (Compare button on each row) and read them side by side: TVL, 7-day change, age, multiple, implied value, chain footprint, farm capital and hold window, with the strongest value in each row starred and a verdict naming the highest implied value and the fastest mover. The selection survives a reload in the page hash.
 - **Filters** — search by name/category/chain, category and chain dropdowns, a watchlist-only toggle, and a Live-token tab that shows the protocols that already trade (their market caps are facts, not a model).
 - **Detail view** — every protocol: the four model factors with their numbers, a recomputation check against `board.json`, and a 7-step farm plan.
 - **Farm plans** — derived from each protocol's own record (category, chains, TVL, age): a category-specific action, a capital tier ($50–$250), a weekly qualifying action, a hold window (30–60 days), a points-page check, a claim step for after a launch, and a farm log. Every step states its cost and its time.
