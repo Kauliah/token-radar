@@ -8,7 +8,7 @@
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', watchlist: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', watchlist: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null, compare: [] };
   var watchlistSet = null;
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -128,6 +128,7 @@
     if (params.get('chain')) state.chain = params.get('chain');
     if (params.get('wl')) state.watchlist = params.get('wl') === '1';
     if (params.get('tab')) state.tab = params.get('tab');
+    if (params.get('cmp')) state.compare = params.get('cmp').split(',').filter(function (s) { return DATA.rows.some(function (r) { return r.slug === s; }); }).slice(0, COMPARE_MAX);
   }
   function writeHash() {
     var params = new URLSearchParams();
@@ -137,6 +138,7 @@
     if (state.watchlist) params.set('wl', '1');
     if (state.tab !== 'pre-token') params.set('tab', state.tab);
     if (state.selected) params.set('p', state.selected);
+    if (state.compare.length > 0) params.set('cmp', state.compare.join(','));
     var next = params.toString();
     if (next) window.history.replaceState(null, '', '#' + next);
     else window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -207,6 +209,155 @@
           el('span', { class: 'sub', text: fmtUsd(r.tvl_usd) + ' TVL on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') + ' · ' + (r.category || 'Other') })
         );
       })
+    );
+  }
+
+  // Top movers and protocol comparison.
+  //
+  // The movers strip answers "what moved this week" at a glance: the five
+  // board rows with the largest seven-day TVL change. The comparison view
+  // answers "which of these should I farm": pick two or three protocols
+  // from the board and read them side by side, one metric per row, with the
+  // strongest value in each row starred. Every number shown here comes from
+  // DATA.rows, the same rows board.json carries, so the view and the board
+  // can never disagree. A fast mover is not automatically a better farm:
+  // the verdict line says so, and the implied-value row is listed first.
+  var COMPARE_MAX = 3;
+
+  function topMovers() {
+    return DATA.rows
+      .filter(function (r) { return r.change_7d !== null && r.change_7d !== undefined; })
+      .slice()
+      .sort(function (a, b) { return b.change_7d - a.change_7d; })
+      .slice(0, 5);
+  }
+
+  function moversStrip() {
+    var movers = topMovers();
+    if (movers.length === 0) return null;
+    return el('section', { class: 'movers', 'aria-label': 'Top movers over seven days' },
+      el('div', { class: 'movers-head' },
+        el('h2', { text: 'Top movers · 7 days' }),
+        el('span', { class: 'sub', text: 'Largest seven-day TVL change on the board. A fast mover is not a better farm — check its implied value before you chase it.' })
+      ),
+      el('div', { class: 'movers-grid' },
+        movers.map(function (r) {
+          return el('article', { class: 'mover-card', tabindex: '0', onclick: function () { openDetail(r.slug); }, onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } } },
+            el('span', { class: 'mover-change ' + (r.change_7d >= 0 ? 'pos' : 'neg'), text: fmtPct(r.change_7d) }),
+            el('b', { text: r.name }),
+            el('span', { class: 'sub', text: 'Rank ' + r.rank + ' · ' + fmtUsd(r.tvl_usd) + ' TVL · ' + fmtUsd(r.implied_value_usd) + ' implied' })
+          );
+        })
+      )
+    );
+  }
+
+  function compareList() {
+    return state.compare
+      .map(function (slug) { return DATA.rows.filter(function (r) { return r.slug === slug; })[0]; })
+      .filter(function (r) { return r !== undefined; });
+  }
+
+  function isComparing(slug) { return state.compare.indexOf(slug) >= 0; }
+
+  function toggleCompare(slug) {
+    var at = state.compare.indexOf(slug);
+    if (at >= 0) state.compare.splice(at, 1);
+    else if (state.compare.length < COMPARE_MAX) state.compare.push(slug);
+    writeHash();
+    render();
+  }
+
+  function clearCompare() {
+    state.compare = [];
+    writeHash();
+    render();
+  }
+
+  // One metric of one protocol, as the comparison table shows it: the text
+  // the reader sees, and the number the winner highlight compares. A null
+  // value means the snapshot does not report the figure, so the row has no
+  // winner for that protocol instead of treating "unknown" as zero.
+  function compareMetric(row, key) {
+    if (key === 'tvl') return { text: fmtUsd(row.tvl_usd), value: row.tvl_usd };
+    if (key === 'growth') return { text: fmtPct(row.change_7d), value: row.change_7d };
+    if (key === 'age') return { text: fmtAge(row.age_days), value: row.age_days };
+    if (key === 'multiple') return { text: row.category_multiple.toFixed(2) + 'x', value: row.category_multiple };
+    if (key === 'implied') return { text: fmtUsd(row.implied_value_usd), value: row.implied_value_usd };
+    if (key === 'chains') return { text: String((row.chains || []).length) + ' chains', value: (row.chains || []).length };
+    if (key === 'capital') return { text: '$' + capitalFor(row) + ' to farm', value: capitalFor(row) };
+    if (key === 'hold') return { text: holdDaysFor(row.age_days) + ' days', value: holdDaysFor(row.age_days) };
+    if (key === 'watchlist') return { text: isWatchlist(row) ? 'Yes' : 'No', value: isWatchlist(row) ? 1 : 0 };
+    return { text: 'n/a', value: null };
+  }
+
+  var COMPARE_ROWS = [
+    { key: 'implied', label: 'Implied value' },
+    { key: 'tvl', label: 'TVL' },
+    { key: 'growth', label: '7-day change' },
+    { key: 'age', label: 'Age with no token' },
+    { key: 'multiple', label: 'Category multiple' },
+    { key: 'chains', label: 'Chain footprint' },
+    { key: 'capital', label: 'Farm capital' },
+    { key: 'hold', label: 'Farm hold window' },
+    { key: 'watchlist', label: 'On the watchlist' }
+  ];
+
+  function compareVerdict(list) {
+    var best = list.slice().sort(function (a, b) { return b.implied_value_usd - a.implied_value_usd; })[0];
+    var fastest = list.filter(function (r) { return r.change_7d !== null && r.change_7d !== undefined; }).slice().sort(function (a, b) { return b.change_7d - a.change_7d; })[0];
+    var text = 'Highest implied value here: ' + best.name + ' at ' + fmtUsd(best.implied_value_usd) + '.';
+    if (fastest) text += ' Fastest mover: ' + fastest.name + ' at ' + fmtPct(fastest.change_7d) + ' over seven days.';
+    text += ' Implied value is the model\u2019s claim; a faster mover is not automatically the better farm.';
+    return text;
+  }
+
+  function compareSection() {
+    var list = compareList();
+    if (list.length === 0) return null;
+    var bar = el('div', { class: 'compare-bar' },
+      el('span', { text: 'Comparing ' + list.length + ' of ' + COMPARE_MAX + ': ' }),
+      list.map(function (r) {
+        return el('span', { class: 'compare-chip' }, r.name,
+          el('button', { class: 'chip-x', type: 'button', 'aria-label': 'Remove ' + r.name + ' from comparison', onclick: function () { toggleCompare(r.slug); } }, '×')
+        );
+      }),
+      el('button', { class: 'button', type: 'button', text: 'Clear comparison', onclick: function () { clearCompare(); } })
+    );
+    if (list.length < 2) {
+      return el('section', { class: 'panel compare', 'aria-label': 'Protocol comparison' }, bar,
+        el('p', { class: 'compare-hint', text: 'Pick one more protocol from the board — use the Compare button on its row — to see them side by side.' }));
+    }
+    var head = el('tr', null,
+      el('th', { scope: 'col', text: 'Metric' }),
+      list.map(function (r) {
+        return el('th', { scope: 'col' },
+          el('button', { class: 'cmp-name', type: 'button', onclick: function () { openDetail(r.slug); } }, r.name),
+          el('span', { class: 'sub', text: ' Rank ' + r.rank })
+        );
+      })
+    );
+    var body = el('tbody');
+    COMPARE_ROWS.forEach(function (metric) {
+      var cells = list.map(function (r) { return compareMetric(r, metric.key); });
+      var best = null;
+      cells.forEach(function (c) { if (c.value !== null && c.value !== undefined && (best === null || c.value > best)) best = c.value; });
+      var tr = el('tr', null, el('th', { scope: 'row', text: metric.label }));
+      cells.forEach(function (c) {
+        var wins = best !== null && c.value !== null && c.value !== undefined && c.value === best;
+        tr.appendChild(el('td', { class: 'num' + (wins ? ' win' : '') }, (wins ? '★ ' : '') + c.text));
+      });
+      body.appendChild(tr);
+    });
+    return el('section', { class: 'panel compare', 'aria-label': 'Protocol comparison' }, bar,
+      el('div', { class: 'table-wrap' },
+        el('table', { class: 'compare-table' },
+          el('caption', { class: 'sub', text: 'Side by side, from the same board rows. A star marks the strongest value in each row.' }),
+          el('thead', null, head),
+          body
+        )
+      ),
+      el('p', { class: 'compare-verdict', text: compareVerdict(list) })
     );
   }
 
@@ -281,7 +432,8 @@
           el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((r.implied_value_usd / max) * 100)) + '%' })),
           el('span', { class: 'num', text: fmtUsd(r.implied_value_usd) })
         )),
-        el('td', null, el('span', { class: 'status', text: isWatchlist(r) ? 'watchlist · no token' : 'no token' }))
+        el('td', null, el('span', { class: 'status', text: isWatchlist(r) ? 'watchlist · no token' : 'no token' })),
+        el('td', null, el('button', { class: 'cmp-btn', type: 'button', 'aria-pressed': isComparing(r.slug) ? 'true' : 'false', disabled: !isComparing(r.slug) && state.compare.length >= COMPARE_MAX ? 'disabled' : null, onclick: function (e) { e.stopPropagation(); toggleCompare(r.slug); } }, isComparing(r.slug) ? '✓ Comparing' : '+ Compare'))
       );
       tbody.appendChild(tr);
     });
@@ -297,7 +449,8 @@
             sortHeader('age', 'Age'),
             sortHeader('multiple', 'Multiple'),
             sortHeader('implied', 'Implied value'),
-            el('th', { scope: 'col', text: 'Token' })
+            el('th', { scope: 'col', text: 'Token' }),
+            el('th', { scope: 'col', text: 'Compare' })
           )),
           tbody
         )
@@ -401,7 +554,11 @@
     shell.appendChild(header());
     shell.appendChild(lede());
     shell.appendChild(spotlight());
+    var movers = moversStrip();
+    if (movers) shell.appendChild(movers);
     shell.appendChild(controls());
+    var comparison = compareSection();
+    if (comparison) shell.appendChild(comparison);
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
     app.appendChild(shell);
